@@ -8,6 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
 <style>
 /* Layout idea: engagement strip on top, three working views (Issues · Files · Standards), each a sidebar + main column of cards. */
 :root{
@@ -215,6 +216,34 @@ table.grid tr.focus td{animation:pulse 1.8s ease-out 1}
 .toast[hidden]{display:none}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 
+/* Sign-in and users */
+body.locked header.top, body.locked main{display:none}
+.auth{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px 16px}
+.auth[hidden]{display:none}
+.auth .card{width:100%;max-width:420px;padding:28px}
+.auth h1{font-size:24px;display:flex;align-items:center;gap:10px;margin-bottom:6px}
+.auth h1 .dot{width:12px;height:12px;border-radius:3px;background:var(--accent);display:inline-block}
+.auth form{display:flex;flex-direction:column;gap:14px;margin-top:18px}
+.auth .btn{justify-content:center;padding:11px 14px;font-size:16px}
+.err{color:var(--hi);font-size:15px;margin:0}
+.err[hidden]{display:none}
+.userchip{display:flex;align-items:center;gap:10px;font-size:15px}
+.avatar{width:34px;height:34px;border-radius:50%;background:var(--accent-soft);color:var(--accent-ink);display:inline-flex;align-items:center;justify-content:center;font-weight:700;flex:none}
+.userchip .who{line-height:1.2}
+.userchip .who small{display:block;color:var(--muted);font-size:13px;text-transform:capitalize}
+.sync{font-size:13px;color:var(--muted);white-space:nowrap}
+.sync.bad{color:var(--hi)}
+.tablewrap{overflow-x:auto}
+table.users{width:100%;border-collapse:collapse;font-size:16px}
+table.users th{font-size:13px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);text-align:left;font-weight:600;padding:8px 10px;border-bottom:1px solid var(--line)}
+table.users td{padding:10px;border-bottom:1px solid var(--line);vertical-align:middle}
+table.users select{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:6px 8px;font-size:15px}
+table.users tr.off td{color:var(--muted)}
+.status{display:inline-flex;align-items:center;gap:6px;font-size:14px}
+.status::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--low)}
+.status.off::before{background:var(--muted)}
+.byline{font-size:13px;color:var(--muted)}
+
 @media (max-width:1020px){
   .cols,.cols.left{grid-template-columns:1fr}
   .stdindex{position:static;max-height:none}
@@ -230,7 +259,20 @@ table.grid tr.focus td{animation:pulse 1.8s ease-out 1}
 @media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important}}
 </style>
 </head>
-<body>
+<body class="locked">
+<div class="auth" id="auth">
+  <div class="card">
+    <h1><span class="dot" aria-hidden="true"></span>Audit Testing Tracker</h1>
+    <p class="muted" style="margin:0">Sign in with the username and password your admin gave you.</p>
+    <form id="login-form" novalidate>
+      <div class="field"><label for="l-user">Username</label><input id="l-user" autocomplete="username" autocapitalize="none" spellcheck="false" required></div>
+      <div class="field"><label for="l-pw">Password</label><input id="l-pw" type="password" autocomplete="current-password" required></div>
+      <p class="err" id="l-err" role="alert" hidden></p>
+      <button class="btn primary" type="submit" id="l-btn">Sign in</button>
+    </form>
+    <p class="small muted" style="margin:16px 0 0">Forgotten your password? Ask an admin to reset it.</p>
+  </div>
+</div>
 <header class="top">
   <div class="wrap">
     <div class="brand">
@@ -239,8 +281,12 @@ table.grid tr.focus td{animation:pulse 1.8s ease-out 1}
         <div class="sub">Automated tests on trial balances and journals, mapped to SSA and SFRS(I) paragraphs</div>
       </div>
       <div class="row">
+        <span class="sync" id="sync" role="status"></span>
+        <button class="btn sm ghost" data-act="refresh" title="Reload the latest data from the team">Refresh</button>
         <button class="btn sm" data-act="copy-csv">Copy issues as CSV</button>
-        <button class="btn sm ghost danger" data-act="reset-all">Reset all data</button>
+        <div class="userchip"><span class="avatar" id="me-avatar" aria-hidden="true"></span><span class="who"><b id="me-name"></b><small id="me-role"></small></span></div>
+        <button class="btn sm ghost" data-act="change-pw">Change password</button>
+        <button class="btn sm" data-act="sign-out">Sign out</button>
       </div>
     </div>
     <div class="eng">
@@ -254,6 +300,7 @@ table.grid tr.focus td{animation:pulse 1.8s ease-out 1}
       <a href="#issues" data-view="issues">Issue tracker <span class="count" id="n-issues">0</span></a>
       <a href="#files" data-view="files">Files and testing <span class="count" id="n-files">0</span></a>
       <a href="#standards" data-view="standards">SSA and SFRS(I) references</a>
+      <a href="#users" data-view="users" id="nav-users" hidden>Users</a>
     </nav>
   </div>
 </header>
@@ -326,6 +373,33 @@ table.grid tr.focus td{animation:pulse 1.8s ease-out 1}
         </div>
         <div class="stack" id="stdlist"></div>
       </div>
+    </div>
+  </section>
+  <!-- USERS (admin only) -->
+  <section class="view" id="v-users" aria-labelledby="h-users">
+    <div class="cols">
+      <div class="card">
+        <h2 id="h-users">Users</h2>
+        <p class="small muted" style="margin:0 0 12px">Passwords are stored by Supabase Auth and are never visible here. Deactivated users cannot sign in or see engagement data.</p>
+        <div class="tablewrap"><table class="users"><thead><tr><th>User</th><th>Username</th><th>Role</th><th>Status</th><th>Added</th><th><span class="sr">Actions</span></th></tr></thead><tbody id="user-rows"></tbody></table></div>
+      </div>
+      <aside class="stack">
+        <div class="card">
+          <h2>Add a user</h2>
+          <form id="add-user" class="stack" style="gap:12px">
+            <div class="field"><label for="u-name">Full name</label><input id="u-name" required placeholder="e.g. Aisha Rahman"></div>
+            <div class="field"><label for="u-user">Username</label><input id="u-user" required pattern="[a-z0-9._\-]{2,32}" autocapitalize="none" spellcheck="false" placeholder="e.g. aisha"><span class="hint">Lowercase letters, numbers, dot, dash or underscore</span></div>
+            <div class="field"><label for="u-role">Role</label><select id="u-role"><option value="auditor">Auditor</option><option value="reviewer">Reviewer</option><option value="admin">Admin</option></select></div>
+            <div class="field"><label for="u-pw">Initial password</label><input id="u-pw" required minlength="6" value="password" autocomplete="new-password"><span class="hint">At least 6 characters. Share it with the user and ask them to change it after signing in.</span></div>
+            <p class="err" id="u-err" role="alert" hidden></p>
+            <button class="btn primary" type="submit">Add user</button>
+          </form>
+        </div>
+        <div class="card"><h2>Roles</h2>
+          <p class="small" style="margin:0 0 6px"><b>Admin</b> adds users, resets passwords, changes roles and deactivates accounts, and can delete any file.</p>
+          <p class="small" style="margin:0 0 6px"><b>Reviewer</b> and <b>Auditor</b> work on the same engagement: upload files, run tests, and update issues. They can delete only files they uploaded.</p>
+        </div>
+      </aside>
     </div>
   </section>
 </main>
@@ -494,14 +568,14 @@ const SG_PH = new Set(['2025-01-01','2025-01-29','2025-01-30','2025-03-31','2025
 /* ------------------------------------------------------------------ */
 /* State                                                                */
 /* ------------------------------------------------------------------ */
-const KEY = 'auditTracker.v1';
-const DEF = () => ({eng:{entity:'', fye:'2026-12-31', mat:250000, pmPct:75, ctPct:5}, files:[], issues:[], seq:1, tests:{}, sample:false});
-let S = null, storageOK = true;
-try { const raw = localStorage.getItem(KEY); if(raw) S = Object.assign(DEF(), JSON.parse(raw)); } catch(e) { storageOK = false; }
-function save(){
-  try { localStorage.setItem(KEY, JSON.stringify(S)); storageOK = true; }
-  catch(e){ if(storageOK) toast('Browser storage is full or unavailable. Your changes stay in this tab until you close it.'); storageOK = false; }
-}
+/* Supabase connection (publishable key: safe in the browser; access is enforced by row level security) */
+const SUPABASE_URL = 'https://aurobpkxmppxwzsgnjtz.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_VSm2jzbmrfEiTIPKxKunLw_xbr9wvr2';
+const EMAIL_DOMAIN = 'auditapp.local';   // usernames sign in as username@auditapp.local in Supabase Auth
+const LEGACY_KEY = 'auditTracker.v1';    // data saved by the earlier, browser-only version
+const sb = (window.supabase && window.supabase.createClient) ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {auth:{persistSession:true, autoRefreshToken:true, detectSessionInUrl:false}}) : null;
+const DEF = () => ({engId:null, eng:{entity:'', fye:'2026-12-31', mat:250000, pmPct:75, ctPct:5}, files:[], issues:[], tests:{}, people:new Map()});
+let S = DEF(), ME = null, USERS = [];
 const ui = {fileId:null, sheet:0, gStart:0, focusRow:null, stdFocus:null, flashIssue:null};
 
 const MAT = () => +S.eng.mat || 0;
@@ -939,17 +1013,22 @@ function score(i){
 const prioFromScore = s => s >= 75 ? 'P1' : s >= 50 ? 'P2' : 'P3';
 const prio = i => i.prioManual ? i.priority : prioFromScore(score(i));
 const isActive = i => i.status === 'Open' || i.status === 'In review';
-function newId(){ return 'AT-' + String(S.seq++).padStart(3, '0'); }
+function newId(){ return (crypto.randomUUID ? crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 3 | 8)).toString(16); })); }
+const codeOf = i => i.code || 'New';
 
-function applyResults(file, found){
-  const old = new Map(S.issues.filter(i => i.auto && i.loc && i.loc.fileId === file.id).map(i => [i.fp, i]));
+async function applyResults(file, found){
+  const oldList = S.issues.filter(i => i.auto && i.loc && i.loc.fileId === file.id);
+  const old = new Map(oldList.map(i => [i.fp, i]));
   const keep = S.issues.filter(i => !(i.auto && i.loc && i.loc.fileId === file.id));
   const next = found.map(f => {
     const o = old.get(f.fp);
     return Object.assign({auto:true, status:'Open', notes:'', created:new Date().toISOString()}, f,
-      o ? {id:o.id, status:o.status, notes:o.notes, prioManual:o.prioManual, priority:o.priority, created:o.created} : {id:newId()});
+      o ? {id:o.id, code:o.code, status:o.status, notes:o.notes, prioManual:o.prioManual, priority:o.priority, created:o.created} : {id:newId(), code:null});
   });
+  const nextIds = new Set(next.map(i => i.id));
+  const removed = oldList.filter(i => !nextIds.has(i.id)).map(i => i.id);
   S.issues = keep.concat(next);
+  await persistIssues(next, removed);
   return next.length;
 }
 
@@ -1022,14 +1101,15 @@ function sampleFile(){
     jRows.push([no, j.date, j.cr, j.desc, null, j.ca, j.u, j.ap]); });
 
   const sheets = [{name:'Trial Balance', rows:tbRows}, {name:'GL Journals', rows:jRows}].map(s => { const d = detect(s.rows); return Object.assign(s, {hr:d.hr, map:d.map}); });
-  return {id:'fsample', name:'Harbourline_FY2026_sample.xlsx', size:0, uploaded:new Date().toISOString(), sample:true, sheets};
+  return {id:newId(), name:'Harbourline_FY2026_sample.xlsx', size:0, uploaded:new Date().toISOString(), sample:true, sheets};
 }
-function loadSample(){
-  S.files = S.files.filter(f => f.id !== 'fsample');
-  S.issues = S.issues.filter(i => !(i.loc && i.loc.fileId === 'fsample'));
-  const f = sampleFile(); S.files.unshift(f); S.sample = true;
-  if(!S.eng.entity) S.eng.entity = 'Harbourline Trading Pte. Ltd. (sample)';
-  const n = applyResults(f, runTests(f)); ui.fileId = f.id; ui.sheet = 0; save(); renderAll();
+async function loadSample(){
+  if(S.files.some(f => f.sample)){ toast('The sample workbook is already loaded.'); return 0; }
+  const f = sampleFile();
+  if(!await insertFile(f)) return 0;
+  S.files.unshift(f);
+  if(!S.eng.entity){ S.eng.entity = 'Harbourline Trading Pte. Ltd. (sample)'; saveEng(true); }
+  const n = await applyResults(f, runTests(f)); ui.fileId = f.id; ui.sheet = 0; renderAll();
   return n;
 }
 
@@ -1048,18 +1128,31 @@ function renderEng(){
   $('#pm-out').textContent = 'PM ' + nf0.format(PM());
   $('#ct-out').textContent = 'Trivial ' + nf0.format(CT());
 }
+function legacyData(){
+  try{
+    if(localStorage.getItem(LEGACY_KEY + '.dismissed')) return null;
+    const raw = localStorage.getItem(LEGACY_KEY); if(!raw) return null;
+    const d = JSON.parse(raw);
+    const files = (d.files || []).filter(f => !f.sample && f.id !== 'fsample');
+    const issues = (d.issues || []).filter(i => !(i.loc && (i.loc.fileId === 'fsample')));
+    return files.length || issues.length ? {d, files, issues} : null;
+  }catch(err){ return null; }
+}
 function renderBanner(){
+  const lg = legacyData();
+  const imp = lg ? '<div class="banner"><b>Data found in this browser.</b><span style="flex:1 1 400px">The earlier version of this app saved ' + lg.files.length + ' file' + (lg.files.length === 1 ? '' : 's') + ' and ' + lg.issues.length + ' issue' + (lg.issues.length === 1 ? '' : 's') + ' on this device only. Import them into the shared engagement so your team can see them.</span><button class="btn sm primary" data-act="import-local">Import to Supabase</button><button class="btn sm ghost" data-act="dismiss-import">Not now</button></div>' : '';
   const has = S.files.some(f => f.sample);
   $('#sample-banner').innerHTML = has ? '<div class="banner"><b>Sample data loaded.</b><span style="flex:1 1 400px">Harbourline Trading is a made-up company with planted exceptions so you can see how each test works. Upload your own files under Files and testing.</span><button class="btn sm" data-act="clear-sample">Remove sample</button></div>' : '';
+  $('#sample-banner').innerHTML = imp + $('#sample-banner').innerHTML; return;
 }
 function filtered(){
   const q = $('#f-q').value.trim().toLowerCase(), rk = $('#f-risk').value, ct = $('#f-cat').value, st = $('#f-status').value, so = $('#f-sort').value;
   let list = S.issues.filter(i => (!rk || i.risk === rk) && (!ct || i.category === ct) && (st === '' ? true : st === 'active' ? isActive(i) : i.status === st));
-  if(q) list = list.filter(i => [i.id, i.title, i.detail, i.category, i.notes, i.loc && i.loc.sheetName, i.loc && i.loc.fileName, i.loc && i.loc.text, ...(i.ssa || []).map(refLabel), ...(i.sfrs || []).map(refLabel)].join(' ').toLowerCase().includes(q));
+  if(q) list = list.filter(i => [i.code, i.title, i.detail, i.category, i.notes, i.loc && i.loc.sheetName, i.loc && i.loc.fileName, i.loc && i.loc.text, ...(i.ssa || []).map(refLabel), ...(i.sfrs || []).map(refLabel)].join(' ').toLowerCase().includes(q));
   const pv = {P1:0, P2:1, P3:2};
   list.sort((a, b) => so === 'amount' ? Math.abs(b.amount || 0) - Math.abs(a.amount || 0)
     : so === 'priority' ? (pv[prio(a)] - pv[prio(b)]) || score(b) - score(a)
-    : so === 'id' ? a.id.localeCompare(b.id)
+    : so === 'id' ? codeOf(a).localeCompare(codeOf(b), undefined, {numeric:true})
     : score(b) - score(a) || Math.abs(b.amount || 0) - Math.abs(a.amount || 0));
   return list;
 }
@@ -1070,7 +1163,7 @@ function issueCard(i){
   const chips = (i.ssa || []).map(r => '<button class="chip" data-act="goto-std" data-ref="' + esc(r) + '">' + esc(refLabel(r)) + '</button>').join('')
     + (i.sfrs || []).map(r => '<button class="chip sfrs" data-act="goto-std" data-ref="' + esc(r) + '">' + esc(refLabel(r)) + '</button>').join('');
   return '<article class="issue ' + esc(i.risk) + (isActive(i) ? '' : ' done') + (ui.flashIssue === i.id ? ' flash' : '') + '" id="iss-' + esc(i.id) + '">'
-   + '<div class="ihead"><span class="iid">' + esc(i.id) + '</span><span class="pill prio ' + p + '" title="Priority">' + p + '</span><span class="pill ' + esc(i.risk) + '">' + esc(i.risk) + ' risk</span><span class="pill">' + esc(i.category) + '</span><span class="spacer"></span><span class="score">score ' + sc + '</span></div>'
+   + '<div class="ihead"><span class="iid">' + esc(codeOf(i)) + '</span><span class="pill prio ' + p + '" title="Priority">' + p + '</span><span class="pill ' + esc(i.risk) + '">' + esc(i.risk) + ' risk</span><span class="pill">' + esc(i.category) + '</span><span class="spacer"></span><span class="score">score ' + sc + '</span></div>'
    + '<h3 class="ititle">' + esc(i.title) + '</h3>'
    + (i.amount ? '<div class="amtline"><span class="amt">' + esc(sgd(i.amount)) + '</span><span class="pm">' + (ratio >= 0.01 ? (ratio * 100).toFixed(0) + '% of performance materiality' : 'below 1% of PM') + '<span class="pmbar" aria-hidden="true"><i style="width:' + Math.min(100, ratio * 100) + '%"></i></span></span></div>' : '')
    + '<p class="idetail" style="margin:4px 0 0">' + esc(i.detail) + '</p>'
@@ -1080,6 +1173,7 @@ function issueCard(i){
    + '<div class="ifoot"><label class="sr" for="st-' + esc(i.id) + '">Status</label><select id="st-' + esc(i.id) + '" data-ch="status" data-id="' + esc(i.id) + '">' + ['Open','In review','Resolved','Waived'].map(s => '<option' + (s === i.status ? ' selected' : '') + '>' + s + '</option>').join('') + '</select>'
    + '<label class="sr" for="nt-' + esc(i.id) + '">Notes</label><input class="note" id="nt-' + esc(i.id) + '" data-ch="notes" data-id="' + esc(i.id) + '" placeholder="Work done, client response, conclusion" value="' + esc(i.notes) + '">'
    + '<button class="btn sm ghost" data-act="edit-issue" data-id="' + esc(i.id) + '">Edit</button></div>'
+   + (i.updatedBy || i.createdBy ? '<div class="byline" style="margin-top:8px">' + (i.auto ? 'Found by test' : 'Added by ' + esc(personName(i.createdBy))) + (i.updatedBy && i.updatedAt ? ' · last updated by ' + esc(personName(i.updatedBy)) + ', ' + esc(fmtStamp(i.updatedAt)) : '') + '</div>' : '')
    + '</article>';
 }
 function renderIssues(){
@@ -1097,7 +1191,7 @@ function renderIssues(){
    + '<div class="tile"><div class="k">Above clearly trivial</div><div class="v num">' + aboveCT + '</div><div class="s">to accumulate under SSA 450.5</div></div>';
   const list = filtered();
   $('#list-count').textContent = list.length + ' issue' + (list.length === 1 ? '' : 's') + ' shown';
-  $('#issue-list').innerHTML = list.length ? list.map(issueCard).join('') : '<div class="card empty">' + (S.issues.length ? 'No issues match these filters.' : 'No issues yet. Upload a file under Files and testing, or add one manually.') + '</div>';
+  $('#issue-list').innerHTML = list.length ? list.map(issueCard).join('') : '<div class="card empty">' + (S.issues.length ? 'No issues match these filters.' : 'No issues yet. Upload a file under Files and testing, add one manually, or <button class="btn sm" data-act="load-sample">load the sample workbook</button>.') + '</div>';
   // Ranking
   const by = {}; act.forEach(i => { by[i.category] = by[i.category] || {s:0, n:0, a:0}; by[i.category].s += score(i); by[i.category].n++; by[i.category].a += Math.abs(i.amount || 0); });
   const rk = Object.entries(by).sort((a, b) => b[1].s - a[1].s); const max = rk.length ? rk[0][1].s : 1;
@@ -1145,12 +1239,12 @@ function renderViewer(){
   html += '<div class="gridwrap" id="gridwrap"><table class="grid"><thead><tr><th></th>' + Array.from({length:ncol}, (_, c) => '<th title="' + esc(roleOf[c] || '') + '">' + colLetter(c) + (roleOf[c] ? '<br><span style="font-size:11px;color:var(--accent-ink)">' + esc(roleOf[c]) + '</span>' : '') + '</th>').join('') + '</tr></thead><tbody>';
   for(let r = ui.gStart; r < end; r++){
     const row = sh.rows[r] || []; const fl = flagsRow[r];
-    html += '<tr id="gr-' + r + '" class="' + (r === sh.hr ? 'hdr ' : '') + (fl ? 'flag ' : '') + (ui.focusRow === r ? 'focus' : '') + '"><th' + (fl ? ' data-act="open-issue" data-id="' + esc(fl[0].id) + '" title="' + esc(fl.map(i => i.id + ' ' + i.title).join('\n')) + '"' : '') + '>' + (r + 1) + '</th>';
+    html += '<tr id="gr-' + r + '" class="' + (r === sh.hr ? 'hdr ' : '') + (fl ? 'flag ' : '') + (ui.focusRow === r ? 'focus' : '') + '"><th' + (fl ? ' data-act="open-issue" data-id="' + esc(fl[0].id) + '" title="' + esc(fl.map(i => codeOf(i) + ' ' + i.title).join('\n')) + '"' : '') + '>' + (r + 1) + '</th>';
     for(let c = 0; c < ncol; c++){
       const v = row[c]; const fc = flagsCell[r + ':' + c];
       const isN = typeof v === 'number';
       const txt = v == null ? '' : isN ? (Number.isInteger(v) && Math.abs(v) < 10000 && roleOf[c] === 'account' ? String(v) : money(v)) : String(v);
-      html += '<td class="' + (isN ? 'n ' : '') + (fc ? 'fc' : '') + '"' + (fc ? ' data-act="open-issue" data-id="' + esc(fc[0].id) + '" title="' + esc(fc.map(i => i.id + ' ' + i.title).join('\n')) + '"' : (txt.length > 40 ? ' title="' + esc(txt) + '"' : '')) + '>' + esc(txt) + '</td>';
+      html += '<td class="' + (isN ? 'n ' : '') + (fc ? 'fc' : '') + '"' + (fc ? ' data-act="open-issue" data-id="' + esc(fc[0].id) + '" title="' + esc(fc.map(i => codeOf(i) + ' ' + i.title).join('\n')) + '"' : (txt.length > 40 ? ' title="' + esc(txt) + '"' : '')) + '>' + esc(txt) + '</td>';
     }
     html += '</tr>';
   }
@@ -1174,7 +1268,7 @@ function renderStandards(){
       + paras.map(p => { const L = linked[p.id] || []; const isF = f && f.id === p.id;
         return '<div class="para' + (isF ? ' focus' : '') + '" id="p-' + p.id + '"><div class="ph"><span class="pref">' + esc(s.code.replace('SFRS(I) ', '').replace('SSA ', '')) + '.' + esc(p.ref) + '</span><span class="pt">' + esc(p.t) + '</span></div>'
           + '<ol>' + p.lines.map((l, n) => '<li class="' + (isF && (f.line == null ? n === 0 : f.line === n) ? 'hl' : '') + '" id="l-' + p.id + '-' + n + '">' + esc(l) + '</li>').join('') + '</ol>'
-          + (L.length ? '<div class="linked">Linked issues: ' + L.slice(0, 12).map(i => '<button class="chip" data-act="open-issue" data-id="' + esc(i.id) + '">' + esc(i.id) + '</button>').join('') + (L.length > 12 ? ' +' + (L.length - 12) + ' more' : '') + '</div>' : '') + '</div>'; }).join('')
+          + (L.length ? '<div class="linked">Linked issues: ' + L.slice(0, 12).map(i => '<button class="chip" data-act="open-issue" data-id="' + esc(i.id) + '">' + esc(codeOf(i)) + '</button>').join('') + (L.length > 12 ? ' +' + (L.length - 12) + ' more' : '') + '</div>' : '') + '</div>'; }).join('')
       + '</section>';
   }).join('') || '<div class="card empty">No paragraphs match that search.</div>';
 }
@@ -1185,7 +1279,9 @@ function renderAll(){ renderEng(); renderBanner(); renderIssues(); renderTests()
 /* ------------------------------------------------------------------ */
 function route(){
   const v = (location.hash || '#issues').slice(1);
-  const name = ['issues','files','standards'].includes(v) ? v : 'issues';
+  let name = ['issues','files','standards','users'].includes(v) ? v : 'issues';
+  if(name === 'users' && !(ME && ME.role === 'admin')) name = 'issues';
+  if(name === 'users') loadUsers();
   document.querySelectorAll('.view').forEach(el => el.classList.toggle('on', el.id === 'v-' + name));
   document.querySelectorAll('nav.tabs a').forEach(a => { if(a.dataset.view === name) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
 }
@@ -1210,7 +1306,7 @@ function editIssue(id){
   const i = id ? S.issues.find(x => x.id === id) : {title:'', detail:'', amount:0, category:'Material misstatement', risk:'Medium', status:'Open', notes:'', ssa:[], sfrs:[], loc:{text:''}};
   if(!i) return;
   const isFileLoc = i.loc && i.loc.fileId != null;
-  openModal('<h2 id="m-title">' + (id ? 'Edit ' + esc(id) : 'Add issue') + '</h2><form id="iform" class="fgrid">'
+  openModal('<h2 id="m-title">' + (id ? 'Edit ' + esc(codeOf(i)) : 'Add issue') + '</h2><form id="iform" class="fgrid">'
    + '<div class="field full"><label for="i-title">Issue</label><input id="i-title" required value="' + esc(i.title) + '"></div>'
    + '<div class="field full"><label for="i-detail">Description and audit response</label><textarea id="i-detail" rows="3">' + esc(i.detail) + '</textarea></div>'
    + '<div class="field"><label for="i-amt">Amount (SGD)</label><input id="i-amt" type="number" step="0.01" value="' + (i.amount || 0) + '"></div>'
@@ -1223,21 +1319,279 @@ function editIssue(id){
    + '<div class="field full"><label for="i-notes">Notes</label><textarea id="i-notes" rows="2">' + esc(i.notes) + '</textarea></div>'
    + '<div class="row full" style="margin-top:6px">' + (id ? '<button type="button" class="btn ghost danger" data-act="del-issue" data-id="' + esc(id) + '">Delete issue</button>' : '') + '<span class="spacer"></span><button type="button" class="btn" data-act="modal-close">Cancel</button><button type="submit" class="btn primary">' + (id ? 'Save changes' : 'Add issue') + '</button></div>'
    + '</form>');
-  $('#iform').addEventListener('submit', e => {
+  $('#iform').addEventListener('submit', async e => {
     e.preventDefault();
-    const o = id ? i : {id:newId(), auto:false, status:'Open', created:new Date().toISOString(), loc:{text:''}};
+    const o = id ? i : {id:newId(), code:null, auto:false, status:'Open', created:new Date().toISOString(), loc:{text:''}, createdBy:ME && ME.id};
     o.title = $('#i-title').value.trim() || 'Untitled issue'; o.detail = $('#i-detail').value.trim(); o.amount = +$('#i-amt').value || 0;
     o.category = $('#i-cat').value; o.risk = $('#i-risk').value; o.notes = $('#i-notes').value;
     const pv = $('#i-prio').value; o.prioManual = !!pv; o.priority = pv || null;
     if(!isFileLoc) o.loc = {text:$('#i-loc').value.trim()};
     o.ssa = Array.from($('#i-ssa').selectedOptions).map(x => x.value); o.sfrs = Array.from($('#i-sfrs').selectedOptions).map(x => x.value);
     if(!id) S.issues.push(o);
-    save(); closeModal(); renderAll(); toast(id ? 'Saved ' + o.id : 'Added ' + o.id);
+    closeModal(); renderAll();
+    if(await saveIssue(o)){ renderAll(); toast(id ? 'Saved ' + codeOf(o) : 'Added ' + codeOf(o)); }
   });
 }
 function confirmBox(title, body, okLabel, onOk){
   openModal('<h2 id="m-title">' + esc(title) + '</h2><p>' + esc(body) + '</p><div class="row"><span class="spacer"></span><button class="btn" data-act="modal-close">Cancel</button><button class="btn primary" id="ok-btn">' + esc(okLabel) + '</button></div>');
   $('#ok-btn').addEventListener('click', () => { closeModal(); onOk(); });
+}
+
+/* ------------------------------------------------------------------ */
+/* Supabase data layer                                                  */
+/* ------------------------------------------------------------------ */
+function setSync(msg, bad){ const el = $('#sync'); if(el){ el.textContent = msg || ''; el.classList.toggle('bad', !!bad); } }
+function dbErr(err, what){
+  const m = (err && (err.message || err.error_description)) || String(err);
+  const friendly = /JWT|jwt|session/i.test(m) ? 'Your session has expired. Sign in again.' : /row-level security|permission denied|42501/i.test(m) ? 'You do not have permission to do that.' : m;
+  setSync('Not saved', true); toast(what + ' failed: ' + friendly); console.error(what, err);
+  return false;
+}
+const round2 = n => Math.round((+n || 0) * 100) / 100;
+function personName(id){ const p = S.people.get(id); return p ? (p.full_name || p.username) : 'a former user'; }
+function fmtStamp(ts){ const d = new Date(ts); if(isNaN(d)) return ''; return d.toLocaleString('en-SG', {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'}); }
+
+function rowToIssue(r){
+  return {id:r.id, code:r.code, fp:r.fp, auto:r.auto, test:r.test, title:r.title, detail:r.detail, amount:+r.amount, category:r.category, risk:r.risk,
+    priority:r.priority, prioManual:r.prio_manual, status:r.status, notes:r.notes, loc:r.loc || {}, ssa:r.ssa || [], sfrs:r.sfrs || [],
+    created:r.created_at, createdBy:r.created_by, updatedBy:r.updated_by, updatedAt:r.updated_at};
+}
+function issueToRow(i){
+  const row = {id:i.id, engagement_id:S.engId, file_id:(i.loc && i.loc.fileId) || null, fp:i.fp || null, auto:!!i.auto, test:i.test || null,
+    title:i.title, detail:i.detail || '', amount:round2(i.amount), category:i.category, risk:i.risk, priority:prio(i), prio_manual:!!i.prioManual,
+    status:i.status, notes:i.notes || '', loc:i.loc || {}, ssa:i.ssa || [], sfrs:i.sfrs || []};
+  if(i.code) row.code = i.code;
+  return row;
+}
+function rowToFile(r){ return {id:r.id, name:r.name, size:+r.size, uploaded:r.uploaded_at, sample:r.is_sample, sheets:r.sheets || [], uploadedBy:r.uploaded_by}; }
+
+async function fetchAll(table, order){
+  let out = [], from = 0;
+  for(;;){
+    const {data, error} = await sb.from(table).select('*').eq('engagement_id', S.engId).order(order).range(from, from + 999);
+    if(error) throw error;
+    out = out.concat(data); if(data.length < 1000) break; from += 1000;
+  }
+  return out;
+}
+async function loadAll(){
+  setSync('Loading…');
+  let {data:engs, error} = await sb.from('engagements').select('*').order('created_at').limit(1);
+  if(error) throw error;
+  let e = engs[0];
+  if(!e){ const r = await sb.from('engagements').insert({}).select().single(); if(r.error) throw r.error; e = r.data; }
+  S.engId = e.id;
+  S.eng = {entity:e.entity || '', fye:e.fye || '', mat:+e.materiality, pmPct:+e.pm_pct, ctPct:+e.ct_pct};
+  S.tests = e.tests || {};
+  const [files, issues, people] = await Promise.all([fetchAll('audit_files', 'uploaded_at'), fetchAll('issues', 'created_at'), sb.from('profiles').select('id,username,full_name,role,active')]);
+  if(people.error) throw people.error;
+  S.files = files.map(rowToFile); S.issues = issues.map(rowToIssue);
+  S.people = new Map(people.data.map(p => [p.id, p]));
+  if(!S.files.some(f => f.id === ui.fileId)){ ui.fileId = S.files[0] ? S.files[0].id : null; ui.sheet = 0; ui.gStart = 0; }
+  setSync('Up to date');
+}
+
+let engTimer = null;
+function saveEng(now){
+  clearTimeout(engTimer); setSync('Saving…');
+  const run = async () => {
+    const {error} = await sb.from('engagements').update({entity:S.eng.entity || '', fye:S.eng.fye || null, materiality:round2(S.eng.mat), pm_pct:+S.eng.pmPct || 0, ct_pct:+S.eng.ctPct || 0, tests:S.tests}).eq('id', S.engId);
+    if(error) return dbErr(error, 'Saving engagement settings');
+    setSync('All changes saved');
+  };
+  if(now) return run(); engTimer = setTimeout(run, 700);
+}
+async function saveIssue(i){
+  setSync('Saving…');
+  const {data, error} = await sb.from('issues').upsert(issueToRow(i)).select('id,code,created_by,updated_by,updated_at').single();
+  if(error) return dbErr(error, 'Saving ' + codeOf(i));
+  i.code = data.code; i.createdBy = data.created_by; i.updatedBy = data.updated_by; i.updatedAt = data.updated_at;
+  setSync('All changes saved'); return true;
+}
+async function persistIssues(list, removedIds){
+  setSync('Saving…');
+  try{
+    if(removedIds.length){ for(let k = 0; k < removedIds.length; k += 200){ const {error} = await sb.from('issues').delete().in('id', removedIds.slice(k, k + 200)); if(error) throw error; } }
+    const existing = list.filter(i => i.code), fresh = list.filter(i => !i.code);
+    const apply = data => data.forEach(r => { const i = list.find(x => x.id === r.id); if(i){ i.code = r.code; i.createdBy = r.created_by; i.updatedBy = r.updated_by; i.updatedAt = r.updated_at; } });
+    for(let k = 0; k < existing.length; k += 200){ const {data, error} = await sb.from('issues').upsert(existing.slice(k, k + 200).map(issueToRow)).select('id,code,created_by,updated_by,updated_at'); if(error) throw error; apply(data); }
+    for(let k = 0; k < fresh.length; k += 200){ const {data, error} = await sb.from('issues').insert(fresh.slice(k, k + 200).map(issueToRow)).select('id,code,created_by,updated_by,updated_at'); if(error) throw error; apply(data); }
+    setSync('All changes saved'); return true;
+  }catch(err){ return dbErr(err, 'Saving issues'); }
+}
+async function dbDeleteIssues(ids){
+  if(!ids.length) return true;
+  const {error} = await sb.from('issues').delete().in('id', ids);
+  if(error) return dbErr(error, 'Deleting'); setSync('All changes saved'); return true;
+}
+async function insertFile(f){
+  setSync('Uploading ' + f.name + '…');
+  const {data, error} = await sb.from('audit_files').insert({id:f.id, engagement_id:S.engId, name:f.name, size:f.size || 0, is_sample:!!f.sample, sheets:f.sheets}).select('uploaded_by,uploaded_at').single();
+  if(error) return dbErr(error, 'Uploading ' + f.name);
+  f.uploadedBy = data.uploaded_by; f.uploaded = data.uploaded_at; return true;
+}
+async function saveFileSheets(f){
+  setSync('Saving…');
+  const {error} = await sb.from('audit_files').update({sheets:f.sheets}).eq('id', f.id);
+  if(error) return dbErr(error, 'Saving column mapping'); setSync('All changes saved'); return true;
+}
+async function dbDeleteFiles(ids){
+  if(!ids.length) return true;
+  const {data, error} = await sb.from('audit_files').delete().in('id', ids).select('id');
+  if(error) return dbErr(error, 'Removing file');
+  if(data.length < ids.length){ toast('Only the person who uploaded a file, or an admin, can remove it.'); setSync('Up to date'); return false; }
+  setSync('All changes saved'); return true;
+}
+
+/* Import data saved by the earlier browser-only version */
+async function importLocal(){
+  const lg = legacyData(); if(!lg) return;
+  setSync('Importing…');
+  const idMap = {};
+  try{
+    if(!S.eng.entity && lg.d.eng){ Object.assign(S.eng, {entity:lg.d.eng.entity || '', fye:lg.d.eng.fye || S.eng.fye, mat:+lg.d.eng.mat || S.eng.mat, pmPct:+lg.d.eng.pmPct || S.eng.pmPct, ctPct:+lg.d.eng.ctPct || S.eng.ctPct}); await saveEng(true); }
+    for(const f of lg.files){
+      const nf = {id:newId(), name:f.name, size:f.size || 0, sample:false, sheets:f.sheets || []};
+      if(!await insertFile(nf)) return; idMap[f.id] = nf.id; S.files.push(nf);
+    }
+    const items = lg.issues.map(i => {
+      const loc = Object.assign({}, i.loc || {});
+      if(loc.fileId != null){ if(!idMap[loc.fileId]) return null; loc.fileId = idMap[loc.fileId]; }
+      return Object.assign({}, i, {id:newId(), code:null, loc, notes:(i.notes || '') + (i.notes ? '' : ''), createdBy:ME.id});
+    }).filter(Boolean);
+    S.issues = S.issues.concat(items);
+    if(!await persistIssues(items, [])) return;
+    try{ localStorage.setItem(LEGACY_KEY + '.dismissed', '1'); }catch(err){}
+    renderAll(); toast('Imported ' + lg.files.length + ' files and ' + items.length + ' issues. Your team can now see them.');
+  }catch(err){ dbErr(err, 'Import'); }
+}
+
+/* ------------------------------------------------------------------ */
+/* Sign in, sign out, passwords                                         */
+/* ------------------------------------------------------------------ */
+const toEmail = u => { u = u.trim().toLowerCase(); return u.includes('@') ? u : u + '@' + EMAIL_DOMAIN; };
+function lock(msg){
+  document.body.classList.add('locked'); $('#auth').hidden = false;
+  const e = $('#l-err'); e.hidden = !msg; e.textContent = msg || '';
+  setTimeout(() => $('#l-user').focus(), 0);
+}
+async function enter(user){
+  const {data:prof, error} = await sb.from('profiles').select('*').eq('id', user.id).maybeSingle();
+  if(error || !prof){ await sb.auth.signOut(); lock(error ? 'Could not load your profile: ' + error.message : 'No profile exists for this account. Ask an admin.'); return; }
+  if(!prof.active){ await sb.auth.signOut(); lock('This account has been deactivated. Ask an admin to reactivate it.'); return; }
+  ME = prof;
+  $('#me-name').textContent = prof.full_name || prof.username;
+  $('#me-role').textContent = prof.role;
+  $('#me-avatar').textContent = (prof.full_name || prof.username).trim().charAt(0).toUpperCase();
+  $('#nav-users').hidden = prof.role !== 'admin';
+  try{ await loadAll(); }catch(err){ dbErr(err, 'Loading data'); }
+  document.body.classList.remove('locked'); $('#auth').hidden = true;
+  renderAll(); route();
+}
+$('#login-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const u = $('#l-user').value, pw = $('#l-pw').value, btn = $('#l-btn'), err = $('#l-err');
+  if(!u.trim() || !pw){ err.hidden = false; err.textContent = 'Enter your username and password.'; return; }
+  if(!sb){ err.hidden = false; err.textContent = 'Could not reach the sign-in service. Check your connection and reload.'; return; }
+  btn.disabled = true; btn.textContent = 'Signing in…'; err.hidden = true;
+  const {data, error} = await sb.auth.signInWithPassword({email:toEmail(u), password:pw});
+  btn.disabled = false; btn.textContent = 'Sign in';
+  if(error){
+    err.hidden = false;
+    err.textContent = /banned/i.test(error.message) ? 'This account has been deactivated. Ask an admin to reactivate it.' : /invalid/i.test(error.message) ? 'Username or password is incorrect.' : error.message;
+    return;
+  }
+  $('#l-pw').value = '';
+  await enter(data.user);
+});
+async function signOut(){
+  if(sb) await sb.auth.signOut();
+  ME = null; S = DEF(); USERS = []; ui.fileId = null;
+  $('#nav-users').hidden = true; if(location.hash === '#users') location.hash = 'issues';
+  lock('');
+}
+function changePassword(){
+  openModal('<h2 id="m-title">Change your password</h2><form id="pwform" class="stack" style="gap:12px">'
+    + '<div class="field"><label for="p-new">New password</label><input id="p-new" type="password" minlength="6" required autocomplete="new-password"></div>'
+    + '<div class="field"><label for="p-new2">Confirm new password</label><input id="p-new2" type="password" minlength="6" required autocomplete="new-password"></div>'
+    + '<p class="err" id="p-err" role="alert" hidden></p>'
+    + '<div class="row"><span class="spacer"></span><button type="button" class="btn" data-act="modal-close">Cancel</button><button type="submit" class="btn primary">Change password</button></div></form>');
+  $('#pwform').addEventListener('submit', async e => {
+    e.preventDefault();
+    const a = $('#p-new').value, b = $('#p-new2').value, er = $('#p-err');
+    if(a.length < 6){ er.hidden = false; er.textContent = 'Use at least 6 characters.'; return; }
+    if(a !== b){ er.hidden = false; er.textContent = 'The two passwords do not match.'; return; }
+    const {error} = await sb.auth.updateUser({password:a});
+    if(error){ er.hidden = false; er.textContent = error.message; return; }
+    closeModal(); toast('Password changed.');
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/* User management (admin)                                              */
+/* ------------------------------------------------------------------ */
+async function loadUsers(){
+  if(!ME || ME.role !== 'admin') return;
+  const {data, error} = await sb.from('profiles').select('*').order('created_at');
+  if(error) return dbErr(error, 'Loading users');
+  USERS = data; S.people = new Map(data.map(p => [p.id, p])); renderUsers();
+}
+function renderUsers(){
+  const tb = $('#user-rows'); if(!tb) return;
+  tb.innerHTML = USERS.map(u => {
+    const me = ME && u.id === ME.id;
+    return '<tr class="' + (u.active ? '' : 'off') + '"><td><div class="userchip"><span class="avatar" aria-hidden="true">' + esc((u.full_name || u.username).charAt(0).toUpperCase()) + '</span><span><b>' + esc(u.full_name || u.username) + '</b>' + (me ? ' <span class="small muted">(you)</span>' : '') + '</span></div></td>'
+      + '<td class="mono">' + esc(u.username) + '</td>'
+      + '<td><label class="sr" for="ur-' + u.id + '">Role for ' + esc(u.username) + '</label><select id="ur-' + u.id + '" data-ch="urole" data-id="' + u.id + '"' + (me ? ' disabled title="You cannot change your own role"' : '') + '>' + ['admin','reviewer','auditor'].map(r => '<option value="' + r + '"' + (r === u.role ? ' selected' : '') + '>' + r.charAt(0).toUpperCase() + r.slice(1) + '</option>').join('') + '</select></td>'
+      + '<td><span class="status' + (u.active ? '' : ' off') + '">' + (u.active ? 'Active' : 'Deactivated') + '</span></td>'
+      + '<td class="small muted">' + esc(new Date(u.created_at).toLocaleDateString('en-SG', {day:'numeric', month:'short', year:'numeric'})) + '</td>'
+      + '<td><div class="row" style="flex-wrap:nowrap"><button class="btn sm" data-act="reset-pw" data-id="' + u.id + '">Reset password</button>'
+      + (me ? '' : '<button class="btn sm ghost' + (u.active ? ' danger' : '') + '" data-act="toggle-user" data-id="' + u.id + '">' + (u.active ? 'Deactivate' : 'Reactivate') + '</button>') + '</div></td></tr>';
+  }).join('');
+}
+async function updateUser(u, changes){
+  const next = Object.assign({full_name:u.full_name, role:u.role, active:u.active}, changes);
+  const {error} = await sb.rpc('admin_update_user', {p_user:u.id, p_full_name:next.full_name, p_role:next.role, p_active:next.active});
+  if(error){ dbErr(error, 'Updating ' + u.username); return loadUsers(); }
+  toast('Updated ' + u.username + '.'); loadUsers();
+}
+function toggleUser(id){
+  const u = USERS.find(x => x.id === id); if(!u) return;
+  if(u.active) confirmBox('Deactivate ' + (u.full_name || u.username) + '?', 'They will be blocked from signing in and from reading engagement data. Their past work stays. You can reactivate them later.', 'Deactivate', () => updateUser(u, {active:false}));
+  else updateUser(u, {active:true});
+}
+function resetPassword(id){
+  const u = USERS.find(x => x.id === id); if(!u) return;
+  openModal('<h2 id="m-title">Reset password for ' + esc(u.full_name || u.username) + '</h2><form id="rpform" class="stack" style="gap:12px">'
+    + '<div class="field"><label for="rp-pw">New password</label><input id="rp-pw" minlength="6" required value="password" autocomplete="new-password"><span class="hint">Share it with ' + esc(u.username) + ' and ask them to change it after signing in.</span></div>'
+    + '<p class="err" id="rp-err" role="alert" hidden></p>'
+    + '<div class="row"><span class="spacer"></span><button type="button" class="btn" data-act="modal-close">Cancel</button><button type="submit" class="btn primary">Reset password</button></div></form>');
+  $('#rpform').addEventListener('submit', async e => {
+    e.preventDefault();
+    const pw = $('#rp-pw').value, er = $('#rp-err');
+    if(pw.length < 6){ er.hidden = false; er.textContent = 'Use at least 6 characters.'; return; }
+    const {error} = await sb.rpc('admin_set_password', {p_user:u.id, p_password:pw});
+    if(error){ er.hidden = false; er.textContent = error.message; return; }
+    closeModal(); toast('Password reset for ' + u.username + '.');
+  });
+}
+$('#add-user').addEventListener('submit', async e => {
+  e.preventDefault();
+  const er = $('#u-err'); er.hidden = true;
+  const username = $('#u-user').value.trim().toLowerCase(), full = $('#u-name').value.trim(), role = $('#u-role').value, pw = $('#u-pw').value;
+  if(!/^[a-z0-9._-]{2,32}$/.test(username)){ er.hidden = false; er.textContent = 'Username must be 2–32 characters: lowercase letters, numbers, dot, dash or underscore.'; return; }
+  if(pw.length < 6){ er.hidden = false; er.textContent = 'Initial password must be at least 6 characters.'; return; }
+  const {error} = await sb.rpc('admin_create_user', {p_username:username, p_password:pw, p_full_name:full, p_role:role});
+  if(error){ er.hidden = false; er.textContent = error.message; return; }
+  e.target.reset(); $('#u-pw').value = 'password';
+  toast('Added ' + username + '. They can sign in with the initial password.'); loadUsers();
+});
+
+async function boot(){
+  if(!sb){ lock('The sign-in service did not load. Check your connection and reload the page.'); return; }
+  sb.auth.onAuthStateChange((event) => { if(event === 'SIGNED_OUT' && ME){ ME = null; S = DEF(); lock('You have been signed out.'); } });
+  const {data} = await sb.auth.getSession();
+  if(data && data.session) await enter(data.session.user); else lock('');
 }
 
 /* ------------------------------------------------------------------ */
@@ -1248,11 +1602,14 @@ async function handleFiles(list){
   let total = 0, last = null;
   for(const file of files){
     try{
-      const f = await readFile(file); S.files.push(f);
-      total += applyResults(f, runTests(f)); last = f;
+      setSync('Reading ' + file.name + '…');
+      const f = await readFile(file);
+      if(!await insertFile(f)) continue;
+      S.files.push(f);
+      total += await applyResults(f, runTests(f)); last = f;
     }catch(err){ toast(err.message || 'Could not read ' + file.name); }
   }
-  if(last){ ui.fileId = last.id; ui.sheet = 0; ui.gStart = 0; save(); renderAll(); go('files'); toast('Ran ' + TESTS.filter(t => S.tests[t.id] !== false).length + ' tests on ' + files.length + ' file' + (files.length > 1 ? 's' : '') + '. ' + total + ' issue' + (total === 1 ? '' : 's') + ' found.'); }
+  if(last){ ui.fileId = last.id; ui.sheet = 0; ui.gStart = 0; renderAll(); go('files'); toast('Ran ' + TESTS.filter(t => S.tests[t.id] !== false).length + ' tests on ' + files.length + ' file' + (files.length > 1 ? 's' : '') + '. ' + total + ' issue' + (total === 1 ? '' : 's') + ' found.'); }
 }
 function gotoLoc(i){
   if(!i || !i.loc || i.loc.fileId == null) return;
@@ -1276,7 +1633,7 @@ function openIssue(id){
 function toCSV(){
   const head = ['ID','Issue','Category','Risk','Priority','Score','Status','Amount (SGD)','Location','Cell','SSA references','SFRS(I) references','Description','Notes'];
   const q = v => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
-  const rows = filtered().map(i => [i.id, i.title, i.category, i.risk, prio(i), score(i), i.status, (i.amount || 0).toFixed(2),
+  const rows = filtered().map(i => [codeOf(i), i.title, i.category, i.risk, prio(i), score(i), i.status, (i.amount || 0).toFixed(2),
     i.loc && i.loc.fileId != null ? i.loc.fileName + ' > ' + i.loc.sheetName + ' > Row ' + (i.loc.row + 1) : (i.loc && i.loc.text) || '',
     i.loc && i.loc.col != null ? colLetter(i.loc.col) + (i.loc.row + 1) : '',
     (i.ssa || []).map(refLabel).join('; '), (i.sfrs || []).map(refLabel).join('; '), i.detail, i.notes].map(q).join(','));
@@ -1292,16 +1649,22 @@ document.addEventListener('click', e => {
     case 'open-issue': openIssue(id); break;
     case 'edit-issue': editIssue(id); break;
     case 'new-issue': editIssue(null); break;
-    case 'del-issue': closeModal(); confirmBox('Delete ' + id + '?', 'The issue and its notes will be removed. Automated issues come back if you run the tests again.', 'Delete', () => { S.issues = S.issues.filter(i => i.id !== id); save(); renderAll(); }); break;
+    case 'del-issue': { const di = S.issues.find(i => i.id === id); closeModal(); confirmBox('Delete ' + (di ? codeOf(di) : 'issue') + '?', 'The issue and its notes will be removed for everyone. Automated issues come back if you run the tests again.', 'Delete', async () => { if(await dbDeleteIssues([id])){ S.issues = S.issues.filter(i => i.id !== id); renderAll(); } }); break; }
     case 'modal-close': closeModal(); break;
     case 'sel-file': ui.fileId = id; ui.sheet = 0; ui.gStart = 0; renderFiles(); break;
     case 'sel-sheet': ui.sheet = +a.dataset.k; ui.gStart = 0; renderViewer(); break;
     case 'page': ui.gStart = Math.max(0, ui.gStart + (+a.dataset.d) * 300); renderViewer(); break;
-    case 'run-tests': { const f = S.files.find(x => x.id === id); if(f){ const n = applyResults(f, runTests(f)); save(); renderAll(); toast(n + ' issue' + (n === 1 ? '' : 's') + ' found in ' + f.name + '. Status and notes on matching issues were kept.'); } break; }
-    case 'remove-file': { const f = S.files.find(x => x.id === id); confirmBox('Remove ' + (f ? f.name : 'file') + '?', 'The file and the automated issues found in it will be removed. Manually added issues stay.', 'Remove', () => { S.files = S.files.filter(x => x.id !== id); S.issues = S.issues.filter(i => !(i.loc && i.loc.fileId === id)); if(id === 'fsample') S.sample = false; ui.fileId = S.files[0] ? S.files[0].id : null; save(); renderAll(); }); break; }
-    case 'load-sample': { const n = loadSample(); toast('Sample workbook loaded. ' + n + ' issues found.'); break; }
-    case 'clear-sample': S.files = S.files.filter(x => x.id !== 'fsample'); S.issues = S.issues.filter(i => !(i.loc && i.loc.fileId === 'fsample')); S.sample = false; if(/\(sample\)/.test(S.eng.entity)) S.eng.entity = ''; ui.fileId = S.files[0] ? S.files[0].id : null; save(); renderAll(); toast('Sample removed.'); break;
-    case 'reset-all': confirmBox('Reset all data?', 'This clears every file, issue, note and setting saved in this browser.', 'Reset', () => { S = DEF(); ui.fileId = null; save(); renderAll(); }); break;
+    case 'run-tests': { const f = S.files.find(x => x.id === id); if(f){ (async () => { const n = await applyResults(f, runTests(f)); renderAll(); toast(n + ' issue' + (n === 1 ? '' : 's') + ' found in ' + f.name + '. Status and notes on matching issues were kept.'); })(); } break; }
+    case 'remove-file': { const f = S.files.find(x => x.id === id); confirmBox('Remove ' + (f ? f.name : 'file') + '?', 'The file and the automated issues found in it will be removed. Manually added issues stay.', 'Remove', async () => { if(!await dbDeleteFiles([id])) return; S.files = S.files.filter(x => x.id !== id); S.issues = S.issues.filter(i => !(i.loc && i.loc.fileId === id)); ui.fileId = S.files[0] ? S.files[0].id : null; renderAll(); }); break; }
+    case 'load-sample': loadSample().then(n => { if(n) toast('Sample workbook loaded. ' + n + ' issues found.'); }); break;
+    case 'clear-sample': { const ids = S.files.filter(x => x.sample).map(x => x.id); dbDeleteFiles(ids).then(ok => { if(!ok) return; S.files = S.files.filter(x => !x.sample); S.issues = S.issues.filter(i => !(i.loc && ids.includes(i.loc.fileId))); if(/\(sample\)/.test(S.eng.entity)){ S.eng.entity = ''; saveEng(true); } ui.fileId = S.files[0] ? S.files[0].id : null; renderAll(); toast('Sample removed.'); }); break; }
+    case 'refresh': loadAll().then(() => { renderAll(); toast('Showing the latest data.'); }).catch(err => dbErr(err, 'Refresh')); break;
+    case 'sign-out': signOut(); break;
+    case 'change-pw': changePassword(); break;
+    case 'import-local': importLocal(); break;
+    case 'dismiss-import': try{ localStorage.setItem(LEGACY_KEY + '.dismissed', '1'); }catch(err){} renderBanner(); break;
+    case 'reset-pw': resetPassword(id); break;
+    case 'toggle-user': toggleUser(id); break;
     case 'copy-csv': {
       const csv = toCSV();
       const show = () => openModal('<h2 id="m-title">Issues as CSV</h2><p class="small muted">Copy this text and paste it into Excel or a working paper.</p><textarea style="width:100%;min-height:260px;font-family:var(--font-mono);font-size:13px" readonly>' + esc(csv) + '</textarea><div class="row" style="margin-top:10px"><span class="spacer"></span><button class="btn" data-act="modal-close">Close</button></div>');
@@ -1316,19 +1679,20 @@ document.addEventListener('keydown', e => {
 $('#modal').addEventListener('click', e => { if(e.target.id === 'modal') closeModal(); });
 document.addEventListener('change', e => {
   const t = e.target, ch = t.dataset.ch; if(!ch) return;
-  if(ch === 'status'){ const i = S.issues.find(x => x.id === t.dataset.id); if(i){ i.status = t.value; save(); renderIssues(); renderFiles(); } }
-  if(ch === 'notes'){ const i = S.issues.find(x => x.id === t.dataset.id); if(i){ i.notes = t.value; save(); } }
-  if(ch === 'test'){ S.tests[t.dataset.id] = t.checked; save(); }
+  if(ch === 'status'){ const i = S.issues.find(x => x.id === t.dataset.id); if(i){ i.status = t.value; renderIssues(); renderFiles(); saveIssue(i); } }
+  if(ch === 'notes'){ const i = S.issues.find(x => x.id === t.dataset.id); if(i){ i.notes = t.value; saveIssue(i); } }
+  if(ch === 'test'){ S.tests[t.dataset.id] = t.checked; saveEng(true); }
+  if(ch === 'urole'){ const u = USERS.find(x => x.id === t.dataset.id); if(u) updateUser(u, {role:t.value}); }
   if(ch === 'map' || ch === 'hr'){
     const f = S.files.find(x => x.id === ui.fileId); if(!f) return; const sh = f.sheets[ui.sheet];
     if(ch === 'map'){ sh.map = sh.map || {}; sh.map[t.dataset.role] = t.value === '' ? null : +t.value; }
     else sh.hr = Math.max(0, (+t.value || 1) - 1);
-    save(); renderViewer(); toast('Mapping updated. Select Run tests again to apply it.');
+    renderViewer(); saveFileSheets(f).then(ok => { if(ok) toast('Mapping saved. Select Run tests again to apply it.'); });
   }
 });
 document.addEventListener('input', e => {
   const k = e.target.dataset.eng;
-  if(k){ S.eng[k] = e.target.type === 'number' ? (e.target.value === '' ? 0 : +e.target.value) : e.target.value; save(); renderEng(); renderIssues(); }
+  if(k){ S.eng[k] = e.target.type === 'number' ? (e.target.value === '' ? 0 : +e.target.value) : e.target.value; saveEng(); renderEng(); renderIssues(); }
 });
 ['#f-q','#f-risk','#f-cat','#f-status','#f-sort'].forEach(s => $(s).addEventListener(s === '#f-q' ? 'input' : 'change', renderIssues));
 $('#s-q').addEventListener('input', () => { ui.stdFocus = null; renderStandards(); });
@@ -1342,8 +1706,7 @@ window.addEventListener('hashchange', route);
 /* ------------------------------------------------------------------ */
 /* Boot                                                                 */
 /* ------------------------------------------------------------------ */
-if(!S){ S = DEF(); loadSample(); } else { ui.fileId = S.files[0] ? S.files[0].id : null; renderAll(); }
-route();
+boot();
 </script>
 </body>
 </html>

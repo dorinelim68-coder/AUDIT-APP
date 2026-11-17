@@ -10,7 +10,34 @@ A single-page audit testing app for financial documents. It reads Excel or CSV f
 - **File uploader**: `.xlsx`, `.xlsm`, `.xls` and `.csv`. Files are parsed locally with SheetJS; nothing is uploaded to a server.
 - **15 automated tests**: balance and footing checks, formula errors, duplicates, round sums, weekend and Singapore public holiday postings, cut-off, entries above performance materiality, missing descriptions and approvals, year-on-year fluctuations, abnormal balances, suspense accounts, related parties, going concern indicators and Benford's law.
 
-Data is saved in the browser's `localStorage`, so it stays on one device and one browser. Use **Copy issues as CSV** to move findings into working papers.
+- **Sign-in and user management**: users sign in with a username and password managed by Supabase Auth. Admins add users with an initial password, reset passwords, change roles and deactivate accounts from the **Users** tab. Everyone can change their own password.
+- **Shared data in Supabase**: engagement settings, uploaded files, issues, statuses and notes are stored in Supabase, so the whole team works on the same engagement. Each issue records who added it and who last updated it.
+
+Use **Copy issues as CSV** to move findings into working papers. If you used the earlier browser-only version, sign in on the same browser and select **Import to Supabase** to move that data across.
+
+## Supabase backend
+
+Project: `https://aurobpkxmppxwzsgnjtz.supabase.co`. The app uses the publishable key, which is safe to ship in the browser; row level security controls access.
+
+| Table | Holds |
+|---|---|
+| `auth.users` | Supabase's built-in accounts and hashed passwords. Usernames sign in as `username@auditapp.local`. |
+| `public.profiles` | Username, full name, role (`admin`, `reviewer`, `auditor`) and active flag. Created automatically for each new auth user. |
+| `public.engagements` | Entity, year end, materiality, performance and trivial percentages, enabled tests, issue counter. |
+| `public.audit_files` | Uploaded workbooks: sheet data, header row and column mapping, uploader. |
+| `public.issues` | Every issue with code (`AT-001`…), risk, priority, status, notes, location, SSA and SFRS(I) references, creator and last editor. |
+
+Admin actions run through database functions `admin_create_user`, `admin_set_password` and `admin_update_user`, which reject anyone who is not an active admin. Deactivating a user bans them in Supabase Auth and blocks their data access.
+
+### Starting users
+
+| Username | Role | Initial password |
+|---|---|---|
+| `priya` | Admin | `password` |
+| `dan` | Reviewer | `password` |
+| `marcus` | Auditor | `password` |
+
+Change these passwords after the first sign-in.
 
 ## Project structure
 
@@ -20,7 +47,7 @@ vercel.json   Vercel settings: clean URLs and security headers
 README.md     This file
 ```
 
-There is no build step and no dependencies to install. SheetJS and Google Fonts load from public CDNs at runtime.
+There is no build step and no dependencies to install. SheetJS, supabase-js and Google Fonts load from public CDNs at runtime.
 
 ## Deploy to Vercel
 
